@@ -7,29 +7,57 @@ Usage: python3 backtest.py --pair btcidr --days 30 --capital 500000 --levels 5 -
 import argparse, requests
 from datetime import datetime, timedelta
 
-BINANCE_MAP = {
-    "btcidr": "BTCUSDT",
-    "ethidr": "ETHUSDT",
-    "usdtidr": None,
-    "bnbidr": "BNBUSDT",
-    "solidr": "SOLUSDT",
-    "adaidr": "ADAUSDT",
-    "xrpidr": "XRPUSDT",
+CRYPTO_MAP = {
+    "btcidr": "BTC",
+    "ethidr": "ETH",
+    "usdtidr": "USDT",
+    "bnbidr": "BNB",
+    "solidr": "SOL",
+    "adaidr": "ADA",
+    "xrpidr": "XRP",
 }
 
 
-def get_usd_idr():
-    try:
-        r = requests.get("https://api.exchangerate-api.com/v4/latest/USD", timeout=10)
-        return float(r.json().get("rates", {}).get("IDR", 16000))
-    except:
-        return 16000
-
-
 def get_ticker_history(pair, days=30):
-    symbol = BINANCE_MAP.get(pair.lower(), "BTCUSDT")
-    if not symbol:
-        print(f"Pair {pair} not supported for backtest.")
+    coin = CRYPTO_MAP.get(pair.lower(), "BTC")
+    limit = min(days * 24, 2000)
+
+    try:
+        r = requests.get(
+            f"https://min-api.cryptocompare.com/data/v2/histohour"
+            f"?fsym={coin}&tsym=IDR&limit={limit}",
+            timeout=15,
+            headers={"User-Agent": "Mozilla/5.0"},
+        )
+        r.raise_for_status()
+        data = r.json().get("Data", {}).get("Data", [])
+        prices = [
+            {"ts": c["time"], "close": float(c["close"])}
+            for c in data
+            if c["close"] > 0
+        ]
+        if prices:
+            print(f"Source: CryptoCompare | {len(prices)} candles")
+        return prices
+    except Exception as e:
+        print(f"CryptoCompare error: {e}")
+
+    try:
+        print("Fallback: Indodax current price...")
+        r = requests.get(f"https://indodax.com/api/{pair}/ticker", timeout=10)
+        price = float(r.json()["ticker"]["last"])
+        import random, math
+
+        volatility = 0.012
+        prices = [{"ts": 0, "close": price}]
+        for i in range(1, limit):
+            change = random.gauss(0, volatility)
+            price = price * math.exp(change)
+            prices.append({"ts": i, "close": price})
+        print(f"Source: Simulated (based on current Indodax price)")
+        return prices
+    except Exception as e:
+        print(f"All sources failed: {e}")
         return []
 
     limit = min(days * 24, 1000)
