@@ -8,7 +8,8 @@ OpenClaw agent instructions for managing the trading bot.
 |---|---|
 | "backtest BTC 30 hari" | `python3 backtest.py --pair btcidr --days 30` |
 | "backtest dengan modal 1jt" | `python3 backtest.py --capital 1000000` |
-| "start paper trading" | `nohup python3 bot.py > logs/bot.log 2>&1 &` |
+| "start paper trading" | `nohup python3 bot.py > logs/bot.log 2>&1 & nohup python3 insight.py > logs/insight.log 2>&1 &` |
+| "start insight only" | `nohup python3 insight.py > logs/insight.log 2>&1 &` |
 | "stop bot" | `pkill -f bot.py` |
 | "cek status bot" | `pgrep -f bot.py && echo running || echo stopped` |
 | "lihat trades hari ini" | query SQLite (lihat section DB) |
