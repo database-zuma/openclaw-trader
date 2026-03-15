@@ -5,7 +5,8 @@ Insight only — no auto trading. User executes manually on Stockbit.
 Schedule: 08:30, 12:00, 15:30, 16:30 WIB
 """
 
-import os, time, requests
+import os, time, requests, xml.etree.ElementTree as ET
+from urllib.parse import quote
 from datetime import datetime
 from dotenv import load_dotenv
 
@@ -75,6 +76,85 @@ LQ45 = [
 ]
 
 TICKERS = [f"{s}.JK" for s in LQ45]
+
+COMPANY_NAMES = {
+    "BBCA": "Bank BCA",
+    "BBRI": "Bank BRI",
+    "BMRI": "Bank Mandiri",
+    "BBNI": "Bank BNI",
+    "TLKM": "Telkom",
+    "ASII": "Astra International",
+    "GOTO": "GoTo Gojek Tokopedia",
+    "BUKA": "Tokopedia",
+    "UNVR": "Unilever",
+    "HMSP": "HM Sampoerna",
+    "GGRM": "Gudang Garam",
+    "PGAS": "PGN Gas",
+    "PTBA": "Bukit Asam",
+    "ANTM": "Aneka Tambang",
+    "INDF": "Indofood",
+    "KLBF": "Kalbe Farma",
+    "ICBP": "Indofood CBP",
+    "MIKA": "Mika",
+    "SMGR": "Semen Indonesia",
+    "INTP": "Indocement",
+}
+
+
+def scrape_news(code, max_items=3):
+    company = COMPANY_NAMES.get(code, f"saham {code}")
+    query = f"{company} saham IDX"
+    url = f"https://news.google.com/rss/search?q={quote(query)}&hl=id&gl=ID&ceid=ID:id"
+    news = []
+    try:
+        r = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+        root = ET.fromstring(r.content)
+        for item in root.findall(".//item")[:max_items]:
+            title = item.findtext("title", "").strip()
+            link = item.findtext("link", "").strip()
+            pub = item.findtext("pubDate", "").strip()
+            if title:
+                news.append({"title": title[:100], "link": link, "pub": pub})
+    except:
+        pass
+    return news
+
+
+def get_ihsg():
+    try:
+        t = yf.Ticker("^JKSE")
+        hist = t.history(period="5d", interval="1d")
+        if hist.empty:
+            return None
+        close = hist["Close"]
+        price = float(close.iloc[-1])
+        prev = float(close.iloc[-2])
+        pct = (price - prev) / prev * 100
+        ma20 = float(close.rolling(min(20, len(close))).mean().iloc[-1])
+        rsi = float(calc_rsi(close).iloc[-1]) if len(close) >= 15 else None
+
+        if pct > 1:
+            trend = "🚀 Bullish kuat"
+        elif pct > 0:
+            trend = "🟢 Positif"
+        elif pct > -1:
+            trend = "🟡 Flat/tipis turun"
+        else:
+            trend = "🔴 Tekanan jual"
+
+        above_ma = "di atas MA20 ✅" if price > ma20 else "di bawah MA20 ⚠️"
+
+        return {
+            "price": price,
+            "pct": pct,
+            "trend": trend,
+            "ma20": ma20,
+            "above_ma": above_ma,
+            "rsi": rsi,
+        }
+    except Exception as e:
+        print(f"IHSG error: {e}")
+        return None
 
 
 def send_tg(msg):
@@ -180,10 +260,21 @@ def analyze(ticker_code):
         return None
 
 
+def ihsg_block():
+    ihsg = get_ihsg()
+    if not ihsg:
+        return ""
+    pct_str = f"+{ihsg['pct']:.2f}%" if ihsg["pct"] >= 0 else f"{ihsg['pct']:.2f}%"
+    line = f"\n*IHSG:* `{ihsg['price']:,.0f}` ({pct_str}) — {ihsg['trend']} | {ihsg['above_ma']}"
+    if ihsg["rsi"]:
+        line += f" | RSI `{ihsg['rsi']:.0f}`"
+    return line
+
+
 def morning_briefing():
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     send_tg(
-        f"📈 *IDX Morning Briefing — {now} WIB*\n\nScanning {len(LQ45)} saham LQ45...\n_Ini insight only — eksekusi manual di Stockbit._"
+        f"📈 *IDX Morning Briefing — {now} WIB*{ihsg_block()}\n\nScanning {len(LQ45)} saham LQ45...\n_Ini insight only — eksekusi manual di Stockbit._"
     )
 
     results = []
@@ -214,6 +305,9 @@ def morning_briefing():
             msg.append(
                 f"`{r['code']}` — {r['price']:,.0f} ({pct_str}) | RSI {r['rsi']:.0f} | {', '.join(r['signals'][:2])}"
             )
+            news = scrape_news(r["code"], max_items=2)
+            for n in news:
+                msg.append(f"  📰 {n['title']}")
         msg.append("")
 
     if watches:
