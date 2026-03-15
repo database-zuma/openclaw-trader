@@ -4,51 +4,48 @@ Backtest grid strategy against Indodax historical OHLC data.
 Usage: python3 backtest.py --pair btcidr --days 30 --capital 500000 --levels 5 --spacing 1.0
 """
 
-import argparse, requests, json
+import argparse, requests
 from datetime import datetime, timedelta
 
+BINANCE_MAP = {
+    "btcidr": "BTCUSDT",
+    "ethidr": "ETHUSDT",
+    "usdtidr": None,
+    "bnbidr": "BNBUSDT",
+    "solidr": "SOLUSDT",
+    "adaidr": "ADAUSDT",
+    "xrpidr": "XRPUSDT",
+}
 
-def get_ohlc(pair, tf="1D", count=30):
+
+def get_usd_idr():
     try:
-        r = requests.get(
-            f"https://indodax.com/api/chart/chart_data?pair={pair}&tf={tf}&count={count}",
-            timeout=15,
-        )
-        r.raise_for_status()
-        data = r.json()
-        if isinstance(data, list):
-            return data
-        return data.get("chart_data", [])
-    except Exception as e:
-        print(f"OHLC fetch error: {e}")
-        return []
+        r = requests.get("https://api.exchangerate-api.com/v4/latest/USD", timeout=10)
+        return float(r.json().get("rates", {}).get("IDR", 16000))
+    except:
+        return 16000
 
 
 def get_ticker_history(pair, days=30):
-    candles = get_ohlc(pair, "1H", days * 24)
-    prices = []
-    for c in candles:
-        if isinstance(c, list) and len(c) >= 5:
-            prices.append(
-                {
-                    "ts": c[0],
-                    "open": float(c[1]),
-                    "high": float(c[2]),
-                    "low": float(c[3]),
-                    "close": float(c[4]),
-                }
-            )
-        elif isinstance(c, dict):
-            prices.append(
-                {
-                    "ts": c.get("time", 0),
-                    "open": float(c.get("open", 0)),
-                    "high": float(c.get("high", 0)),
-                    "low": float(c.get("low", 0)),
-                    "close": float(c.get("close", 0)),
-                }
-            )
-    return prices
+    symbol = BINANCE_MAP.get(pair.lower(), "BTCUSDT")
+    if not symbol:
+        print(f"Pair {pair} not supported for backtest.")
+        return []
+
+    limit = min(days * 24, 1000)
+    idr = get_usd_idr()
+    print(f"USD/IDR rate: {idr:,.0f}")
+
+    try:
+        r = requests.get(
+            f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=1h&limit={limit}",
+            timeout=15,
+        )
+        r.raise_for_status()
+        return [{"ts": c[0], "close": float(c[4]) * idr} for c in r.json()]
+    except Exception as e:
+        print(f"Binance error: {e}")
+        return []
 
 
 def run_backtest(pair, days, capital, levels, spacing_pct):
@@ -58,24 +55,10 @@ def run_backtest(pair, days, capital, levels, spacing_pct):
     print(f"  Grid: {levels} levels @ {spacing_pct}% spacing")
     print(f"{'=' * 55}\n")
 
+    print("Fetching historical data from CoinGecko...")
     prices = get_ticker_history(pair, days)
     if not prices:
-        print("No historical data. Using simulated prices for demo...")
-        import random
-
-        base = 1_650_000
-        prices = [
-            {
-                "close": base + random.randint(-50000, 50000),
-                "high": 0,
-                "low": 0,
-                "ts": i,
-            }
-            for i in range(days * 24)
-        ]
-
-    if not prices:
-        print("Could not get price data.")
+        print("Could not get price data. Check internet connection.")
         return
 
     center = prices[0]["close"]
